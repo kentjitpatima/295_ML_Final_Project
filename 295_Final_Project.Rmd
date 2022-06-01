@@ -1,0 +1,62 @@
+---
+title: '295 ML for DL: Final Project'
+author: "Kent Jitpatima"
+date: "5/31/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(lubridate)
+library(scales)
+library(gridExtra)
+library(tidyverse)
+```
+
+```{r}
+#Load Data Set
+bank_data <- read.csv('bank-full.csv', sep = ';')
+```
+
+```{r}
+#Clean up Data set, turn variables into tidyverse style, 
+#Change yes/no to numeric binary outcomes
+#Change character inputs to Factors for possible logistic Regression
+bank_data <- bank_data %>% 
+  mutate(y = case_when(y == 'yes' ~ 1,
+                       y == 'no' ~ 0)) %>% 
+  mutate(loan = case_when(loan == 'yes' ~ 1,
+                          loan == 'no' ~ 0)) %>% 
+  mutate(housing = case_when(housing == 'yes' ~ 1, 
+                             housing == 'no' ~ 0)) %>% 
+  mutate(default = case_when(default == 'yes' ~ 1, 
+                             default == 'no' ~ 0)) 
+  
+fact_cols <- c('job','marital','education','contact','month','poutcome','loan','housing','default','y')
+bank_data[fact_cols] <- lapply(bank_data[fact_cols], factor)
+
+```
+
+## Overview of Data 
+```{r}
+#Data Overview 
+head(bank_data)
+str(bank_data)
+```
+### Create Train/Test Split
+```{r}
+#Data Partitioning into train/split
+#Will use a 70%/30% split
+set.seed(123)
+split_index <- sample(2,nrow(bank_data), replace = TRUE, prob = c(0.7,0.3))
+train <- bank_data[split_index == 1,]
+test <- bank_data[split_index == 2,]
+```
+
+### Create Random Forest Model
+```{r}
+rf <- randomForest(y~., data=train)
+```
+
