@@ -13,15 +13,21 @@ library(lubridate)
 library(scales)
 library(gridExtra)
 library(tidyverse)
+library(rpart)
+library(rpart.plot)
 ```
 
+# 1 Data Wrangling
+
+## 1.1 Load Data and Clean
 ```{r}
 #Load Data Set
 bank_data <- read.csv('bank-full.csv', sep = ';')
 ```
 
+
 ```{r}
-#Clean up Data set, turn variables into tidyverse style, 
+#Clean up Data set, turn variables into tidyverse style, for Random Forest
 #Change yes/no to numeric binary outcomes
 #Change character inputs to Factors for possible logistic Regression
 bank_data <- bank_data %>% 
@@ -39,13 +45,13 @@ bank_data[fact_cols] <- lapply(bank_data[fact_cols], factor)
 
 ```
 
-## Overview of Data 
+## 1.2 Overview of Data 
 ```{r}
 #Data Overview 
 head(bank_data)
 str(bank_data)
 ```
-### Create Train/Test Split
+## 1.3 Create Train/Test Split
 ```{r}
 #Data Partitioning into train/split
 #Will use a 70%/30% split
@@ -55,8 +61,147 @@ train <- bank_data[split_index == 1,]
 test <- bank_data[split_index == 2,]
 ```
 
-### Create Random Forest Model
+# 2 Decision Tree Model
+
+## 2.1 Create Model and Plot
+
 ```{r}
-rf <- randomForest(y~., data=train)
+library(tree)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+
+dt <- rpart(y~.-duration-month-day, 
+            data = train, 
+            method = 'class',
+            minsplit = 3,
+            minbucket = 2)
 ```
+
+## 2.2 Predict on Validation Set
+
+```{r}
+#Predict training data and validation data with Decision Tree Model
+predict_train_dt <- predict(dt, train, type = 'class')
+predict_test_dt <- predict(dt, test, type = 'class')
+```
+
+```{r}
+#Create Confusion Table 
+confusion_train_dt <- table(train$y, predict_train_dt)
+confusion_train_acc <- sum(diag(confusion_train_dt)) / sum(confusion_train_dt)
+confusion_train_dt
+print(paste('Accuracy for train', confusion_train_acc))
+```
+
+```{r}
+confusion_test_dt <- table(test$y, predict_test_dt)
+confusion_test_acc <- sum(diag(confusion_test_dt)) / sum(confusion_test_dt)
+confusion_test_dt
+print(paste('Accuracy for test', confusion_test_acc))
+```
+
+## 2.3 Tune Hyperparameters
+
+```{r}
+
+```
+
+
+# 3 Random Forest Model
+
+## 3.1 Create Model 
+```{r}
+rf <- randomForest(y~.-duration-month-day, data=train , mtry = sqrt(13))
+```
+
+## 3.2 Display Diagnostics
+```{r}
+print(rf)
+```
+
+## 3.3 Evaluate Initial Random Forest Model
+```{r}
+#Create Confusion Matrices from testing data
+p1 <- predict(rf, train)
+confusionMatrix(p1, train$y)
+
+#Prediction & Confusion MAtrix - test data
+p2 <- predict(rf, test)
+confusionMatrix(p2, test$y)
+```
+```{r}
+varImpPlot(rf)
+```
+## 3.4 Tune Hyperparameters with caret
+```{r}
+#Tuning using Caret
+#might use ranger instead, maybe just cv
+set.seed(123)
+control <- trainControl(method="cv", number = 3, search="random")
+mtry <- sqrt(13)
+rf_random <- train(y~., data=bank_data, method="rf", metric="Accuracy", tuneLength = 4, trControl=control)
+print(rf_random)
+plot(rf_random)
+```
+
+# 4 Gradient Boosting Random Forest(XGBOOST)
+
+## 4.1 Wrangle Data for use in Xgboost
+```{r}
+library(xgboost)
+bank_data_xg <- bank_data %>% 
+  select(-duration, -month, -day, -y)
+
+bank_data_xg <- bank_data_xg %>%
+  sapply(., as.numeric) %>% 
+  as.matrix()
+
+train_xg <- bank_data_xg[split_index == 1,]
+test_xg <- bank_data_xg[split_index == 2,]
+
+train_xg_label <- bank_data %>% 
+  select(y) %>% 
+  as.matrix() %>% 
+  .[split_index == 1,] %>% 
+  as.numeric()
+
+test_xg_label <- bank_data %>% 
+  select(y) %>% 
+  as.matrix() %>% 
+  .[split_index == 2,] %>% 
+  as.numeric()
+```
+
+```{r}
+dtrain <- xgb.DMatrix(data = train_xg, label= train_xg_label)
+dtest <- xgb.DMatrix(data = test_xg, label= test_xg_label)
+```
+
+## 4.2 Create Model
+```{r}
+boost_rf <- xgboost(data = dtrain, # the data   
+                    nround = 44000, # max number of boosting iterations
+                    objective = "binary:logistic")
+```
+```{r}
+```
+
+
+```{r}
+summary(boost_rf)
+```
+
+## 4.3 Predict Validation 
+```{r}
+pred_xg <- as.numeric(predict(boost_rf,dtest)>0.5)
+observed = getinfo(dtest, "label")
+cm_xg <- confusionMatrix(table(pred_xg,obs))
+cm_xg
+```
+## 4.4 Tune Hyperparameters
+
+
+
+
 
