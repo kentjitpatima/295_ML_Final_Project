@@ -129,6 +129,7 @@ confusionMatrix(p1, train$y)
 #Prediction & Confusion MAtrix - test data
 p2 <- predict(rf, test)
 confusionMatrix(p2, test$y)
+p2
 ```
 ```{r}
 varImpPlot(rf)
@@ -138,11 +139,28 @@ varImpPlot(rf)
 #Tuning using Caret
 #might use ranger instead, maybe just cv
 set.seed(123)
-control <- trainControl(method="cv", number = 3, search="random")
+control <- trainControl(method="cv", number = 5, search="random")
 mtry <- sqrt(13)
 rf_random <- train(y~., data=bank_data, method="rf", metric="Accuracy", tuneLength = 4, trControl=control)
 print(rf_random)
 plot(rf_random)
+```
+## 3.5 New Tuned Model
+
+```{r}
+rf2 <- randomForest(y~.-duration-month-day, data=train, mtry = 13)
+
+print(rf2)
+```
+
+```{r}
+#Create Confusion Matrices from testing data
+p3 <- predict(rf2, train)
+confusionMatrix(p1, train$y)
+
+#Prediction & Confusion MAtrix - test data
+p4 <- predict(rf2, test)
+confusionMatrix(p2, test$y)
 ```
 
 # 4 Gradient Boosting Random Forest(XGBOOST)
@@ -179,10 +197,11 @@ dtest <- xgb.DMatrix(data = test_xg, label= test_xg_label)
 ```
 
 ## 4.2 Create Model
-```{r}
+```{r, results = hide}
 boost_rf <- xgboost(data = dtrain, # the data   
-                    nround = 44000, # max number of boosting iterations
-                    objective = "binary:logistic")
+                    nround = 150000, # max number of boosting iterations
+                    objective = "binary:logistic",
+                    print.every.n = 1000)
 ```
 ```{r}
 ```
@@ -196,12 +215,111 @@ summary(boost_rf)
 ```{r}
 pred_xg <- as.numeric(predict(boost_rf,dtest)>0.5)
 observed = getinfo(dtest, "label")
-cm_xg <- confusionMatrix(table(pred_xg,obs))
+cm_xg <- confusionMatrix(table(pred_xg,observed))
 cm_xg
 ```
 ## 4.4 Tune Hyperparameters
 
+```{r}
+#Default Parameters
+params <- list(booster = "gbtree",
+               objective = "binary:logistic",
+               eta=0.3, 
+               gamma=0, 
+               max_depth=6, 
+               min_child_weight=1, 
+               subsample=1, 
+               colsample_bytree=1)
+
+xgbcv <- xgb.cv( params = params,
+                 data = dtrain, 
+                 nrounds = 150000,
+                 nfold = 5, 
+                 showsd = T, 
+                 stratified = T, 
+                 print.every.n = 1000,
+                 early.stop.round = 5000, 
+                 maximize = T)
+```
+```{r}
+xgbcv$best_iteration
+```
 
 
+```{r}
+#load libraries
+library(data.table)
+library(mlr)
+#create tasks
+traintask <- makeClassifTask (data = train,target = "y")
+testtask <- makeClassifTask (data = test,target = "y")
 
+#do one hot encoding
+traintask <- createDummyFeatures (obj = traintask) 
+testtask <- createDummyFeatures (obj = testtask)
+
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   predict.type = "response")
+
+lrn$par.vals <- list( objective="binary:logistic", 
+                      eval_metric="error",
+                      nrounds=150000, 
+                      eta=0.1)
+
+#set parameter space
+params <- makeParamSet( makeDiscreteParam("booster",
+                                          values = c("gbtree","gblinear")),
+                        makeIntegerParam("max_depth",
+                                         lower = 3L,
+                                         upper = 10L),
+                        makeNumericParam("min_child_weight",
+                                         lower = 1L,
+                                         upper = 10L),
+                        makeNumericParam("subsample",
+                                         lower = 0.5,
+                                         upper = 1),
+                        makeNumericParam("colsample_bytree",
+                                         lower = 0.5,
+                                         upper = 1))
+#set re sampling strategy
+rdesc <- makeResampleDesc("CV",stratify = T,iters=5L)
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = 10L)
+```
+
+
+```{r}
+#set parallel backend
+library(parallel)
+library(parallelMap) 
+parallelStartSocket(cpus = detectCores())
+
+#parameter tuning
+mytune <- tuneParams(learner = lrn, 
+                     task = traintask, 
+                     resampling = rdesc, 
+                     measures = acc, 
+                     par.set = params, 
+                     control = ctrl, 
+                     show.info = T)
+mytune$y 
+```
+
+
+```{r}
+#set hyperparameters
+lrn_tune <- setHyperPars(lrn,par.vals = mytune$x)
+
+#train model
+xgmodel <- train(learner = lrn_tune,task = traintask)
+
+#predict model
+xgpred <- predict(xgmodel,testtask)
+```
+
+```{r}
+confusionMatrix(xgpred$data$response,xgpred$data$truth)
+```
 
